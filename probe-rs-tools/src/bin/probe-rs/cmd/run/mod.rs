@@ -134,7 +134,7 @@ impl Cmd {
                 let loader = build_loader(
                     &mut session,
                     &self.shared_options.path,
-                    self.shared_options.format_options,
+                    self.shared_options.format_options.clone(),
                     None,
                 )?;
 
