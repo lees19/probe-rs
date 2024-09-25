@@ -94,57 +94,73 @@ impl Cmd {
     ) -> Result<()> {
         let run_mode = detect_run_mode(&self)?;
 
+        //need to changes these to the L0 and L1 elf files. 
+        let elfs = vec![
+            "/home/lees/projects/my-app/target/thumbv7em-none-eabihf/debug/levels", 
+            "/home/lees/projects/my-app/citadel/app/target/thumbv7em-none-eabihf/debug/main",
+        ]; 
+        let mut rtt_clients = Vec::<RttClient>::new(); 
+
         let (mut session, probe_options) =
             self.shared_options.probe_options.simple_attach(lister)?;
 
-        let rtt_scan_regions = match self.shared_options.rtt_scan_memory {
-            true => session.target().rtt_scan_regions.clone(),
-            false => ScanRegion::Ranges(vec![]),
-        };
+        let core_id: usize = 0; 
+        for elf_path in elfs { 
+            let rtt_scan_regions = match self.shared_options.rtt_scan_memory {
+                true => session.target().rtt_scan_regions.clone(),
+                false => ScanRegion::Ranges(vec![]),
+            };
 
-        let mut rtt_config = RttConfig::default();
-        rtt_config.channels.push(RttChannelConfig {
-            channel_number: Some(0),
-            show_location: !self.shared_options.no_location,
-            log_format: self.shared_options.log_format.clone(),
-            ..Default::default()
-        });
+            let mut rtt_config = RttConfig::default();
+            rtt_config.channels.push(RttChannelConfig {
+                channel_number: Some(0),
+                show_location: !self.shared_options.no_location,
+                log_format: self.shared_options.log_format.clone(),
+                ..Default::default()
+            });
 
-        let elf = fs::read(&self.shared_options.path)?;
-        let mut rtt_client =
-            RttClient::new(Some(&elf), session.target(), rtt_config, rtt_scan_regions)?;
+            let elf = fs::read(elf_path)?;
+            // rtt_clients.push(RttClient::new(Some(&elf), session.target(), rtt_config, rtt_scan_regions)?); 
+        
 
-        let core_id = rtt_client.core_id();
+            // let elf = fs::read(&self.shared_options.path)?;
+            let mut rtt_client =
+                RttClient::new(Some(&elf), session.target(), rtt_config, rtt_scan_regions)?;
 
-        if run_download {
-            let loader = build_loader(
-                &mut session,
-                &self.shared_options.path,
-                self.shared_options.format_options,
-                None,
-            )?;
-            run_flash_download(
-                &mut session,
-                &self.shared_options.path,
-                &self.shared_options.download_options,
-                &probe_options,
-                loader,
-                self.shared_options.chip_erase,
-            )?;
+            let core_id = rtt_client.core_id();
 
-            // reset the core to leave it in a consistent state after flashing
-            session
-                .core(core_id)?
-                .reset_and_halt(Duration::from_millis(100))?;
-        }
+            if run_download {
+                let loader = build_loader(
+                    &mut session,
+                    &self.shared_options.path,
+                    self.shared_options.format_options.clone(),
+                    None,
+                )?;
+                run_flash_download(
+                    &mut session,
+                    &self.shared_options.path,
+                    &self.shared_options.download_options,
+                    &probe_options,
+                    loader,
+                    self.shared_options.chip_erase,
+                )?;
 
-        rtt_client.timezone_offset = timestamp_offset;
+                // reset the core to leave it in a consistent state after flashing
+                session
+                    .core(core_id)?
+                    .reset_and_halt(Duration::from_millis(100))?;
+            }
 
-        if run_download {
-            // We ended up resetting the MCU, throw away old RTT data and prevent
-            // printing warnings when it initialises.
-            let mut core = session.core(core_id)?;
-            rtt_client.clear_control_block(&mut core)?;
+            rtt_client.timezone_offset = timestamp_offset;
+
+            if run_download {
+                // We ended up resetting the MCU, throw away old RTT data and prevent
+                // printing warnings when it initialises.
+                let mut core = session.core(core_id)?;
+                rtt_client.clear_control_block(&mut core)?; 
+            }
+            rtt_clients.push(rtt_client); 
+
         }
 
         run_mode.run(
@@ -153,7 +169,7 @@ impl Cmd {
                 core_id,
                 path: self.shared_options.path,
                 always_print_stacktrace: self.shared_options.always_print_stacktrace,
-                rtt_client,
+                rtt_clients,
             },
         )?;
 
@@ -214,7 +230,7 @@ struct RunLoop {
     core_id: usize,
     path: PathBuf,
     always_print_stacktrace: bool,
-    rtt_client: RttClient,
+    rtt_clients: Vec<RttClient>,
 }
 
 #[derive(PartialEq, Debug)]
@@ -280,13 +296,15 @@ impl RunLoop {
 
         let result = self.do_run_until(core, output_stream, timeout, start, &mut predicate);
 
-        // Always clean up after RTT but don't overwrite the original result.
-        let cleanup_result = self.rtt_client.clean_up(core);
-
-        if result.is_ok() {
-            // If the result is Ok, we return the potential error during cleanup.
-            cleanup_result?;
+        for rtt_client in &mut self.rtt_clients{ 
+            // Always clean up after RTT but don't overwrite the original result.
+            let cleanup_result = rtt_client.clean_up(core);
         }
+
+        // if result.is_ok() {
+        //     // If the result is Ok, we return the potential error during cleanup.
+        //     cleanup_result?;
+        // }
 
         result
     }
@@ -339,8 +357,14 @@ impl RunLoop {
                     return Err(anyhow!("The core is locked up."));
                 }
             }
-
-            let had_rtt_data = poll_rtt(&mut self.rtt_client, core, output_stream)?;
+            
+            let mut had_rtt_data = false; 
+            for rtt_client in &mut self.rtt_clients{ 
+                if poll_rtt(rtt_client, core, output_stream)? { 
+                    had_rtt_data = true; 
+                }
+                // had_rtt_data = poll_rtt(rtt_client, core, output_stream)?;
+            }
 
             if return_reason.is_none() {
                 if exit.load(Ordering::Relaxed) {

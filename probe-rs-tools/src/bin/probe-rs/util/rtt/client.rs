@@ -10,6 +10,7 @@ use probe_rs::{
 };
 use time::UtcOffset;
 
+#[derive(Debug)]
 pub struct RttClient {
     pub defmt_data: Option<Arc<DefmtState>>,
     pub scan_region: ScanRegion,

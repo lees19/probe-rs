@@ -189,10 +189,14 @@ impl TestRunMode {
         core.reset_and_halt(Duration::from_millis(100))
             .map_err(|e| anyhow::anyhow!(e))?;
 
-        session_and_runloop
-            .run_loop
-            .rtt_client
-            .clear_control_block(core)?;
+        // session_and_runloop
+        //     .run_loop
+        //     .rtt_client
+        //     .clear_control_block(core)?;
+
+        for rtt_client in &mut session_and_runloop.run_loop.rtt_clients { 
+            rtt_client.clear_control_block(core)?; 
+        }
 
         let timeout = test.timeout.map(|t| Duration::from_secs(t as u64));
         let timeout = timeout.unwrap_or(Duration::from_secs(60)); // TODO: make global timeout configurable: https://github.com/probe-rs/embedded-test/issues/3

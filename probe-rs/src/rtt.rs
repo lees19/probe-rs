@@ -270,7 +270,6 @@ impl Rtt {
         }
 
         let cb_len = rtt_header.total_rtt_buffer_size();
-
         if let Cow::Owned(mem) = &mut mem {
             // If memory wasn't passed in, read the rest of the control block
             mem.resize(cb_len, 0);
@@ -292,7 +291,7 @@ impl Rtt {
         let channel_buffer_size = rtt_header.channel_buffer_size();
 
         let up_channels_start = rtt_header.header_size();
-        let up_channels_len = max_up_channels * channel_buffer_size;
+        let up_channels_len = max_up_channels * channel_buffer_size; 
         let up_channels_raw_buffer = &mem[up_channels_start..][..up_channels_len];
         let up_channels_buffer = rtt_header.parse_channel_buffers(up_channels_raw_buffer)?;
 
